@@ -30,6 +30,12 @@ cmake --build build --parallel
 ./build/schwarzschild_black_hole
 ```
 
+The app always covers the native Retina framebuffer, but the expensive ray pass uses
+an offscreen target and a fullscreen upscale. The default 960×540 performance mode
+is intended for smooth interaction. Use `--quality` for 1280×720 ray tracing or
+`--retina` for native-density rendering. Add `--benchmark` to print measured FPS
+every two seconds.
+
 ## Controls
 
 - Left mouse drag: orbit the camera
@@ -38,6 +44,7 @@ cmake --build build --parallel
 - `Backspace`: remove all objects
 - `O`: reset the default objects
 - `P`: pause/resume object physics
+- `Q`: toggle performance/quality render resolution
 - `R`: reset the camera
 - `Esc`: quit
 
@@ -67,6 +74,7 @@ inside `blackhole.frag`. Dynamic bodies are passed through ordinary uniform arra
 keeping the renderer within OpenGL 4.1 Core: there are no compute shaders, shader
 storage buffers, or post-4.1 extension dependencies. This remains a physically
 inspired real-time visualization rather than a precision general-relativity solver.
-The ray marcher uses RK4 near the black hole and midpoint integration in weak-field
-space, adaptive disk sampling, broad-phase fragment culling, and cached uniform
-locations to reduce GPU and CPU work without reducing near-hole detail.
+The ray marcher uses RK4 only in strong-field space and midpoint integration farther
+out, exits after leaving the lensing region, adaptively samples the disk, culls
+fragments with a broad phase, and caches uniform locations. Noise octaves are reserved
+for scales that remain visible at the output resolution.

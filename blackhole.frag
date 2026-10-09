@@ -21,8 +21,8 @@ const float PHOTON_SPHERE_RADIUS = 1.5;
 const float GM = 0.5; // c = 1, therefore r_s = 2GM.
 const float DISK_INNER_RADIUS = 3.0;
 const float DISK_OUTER_RADIUS = 9.0;
-const float ESCAPE_RADIUS = 34.0;
-const int MAX_STEPS = 420;
+const float FAR_FIELD_RADIUS = 11.5;
+const int MAX_STEPS = 320;
 
 float hash12(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -69,21 +69,31 @@ float fbm4(vec3 p) {
     return value;
 }
 
+float fbm3(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    for (int octave = 0; octave < 3; ++octave) {
+        value += amplitude * valueNoise(p);
+        p = p * 2.03 + vec3(17.1, 9.2, 13.7);
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
 vec3 blackbodyColor(float kelvin) {
-    // Tanner Helland's blackbody approximation, converted from display to linear light.
-    float temperature = clamp(kelvin, 1000.0, 40000.0) / 100.0;
-    float red = temperature <= 66.0
-        ? 1.0
-        : clamp(1.292936 * pow(temperature - 60.0, -0.133205), 0.0, 1.0);
-    float green = temperature <= 66.0
-        ? clamp(0.390082 * log(temperature) - 0.631841, 0.0, 1.0)
-        : clamp(1.129891 * pow(temperature - 60.0, -0.075515), 0.0, 1.0);
-    float blue = temperature >= 66.0
-        ? 1.0
-        : (temperature <= 19.0
-            ? 0.0
-            : clamp(0.543207 * log(temperature - 10.0) - 1.196254, 0.0, 1.0));
-    return pow(vec3(red, green, blue), vec3(2.2));
+    // Linear-light samples of the Planckian locus. Piecewise interpolation is
+    // visually equivalent here and much cheaper than per-step logarithms/powers.
+    float temperature = clamp(kelvin, 1200.0, 20000.0);
+    if (temperature < 3500.0) {
+        float blend = smoothstep(1200.0, 3500.0, temperature);
+        return mix(vec3(1.0, 0.018, 0.0002), vec3(1.0, 0.53, 0.24), blend);
+    }
+    if (temperature < 6500.0) {
+        float blend = smoothstep(3500.0, 6500.0, temperature);
+        return mix(vec3(1.0, 0.53, 0.24), vec3(1.0, 0.98, 0.94), blend);
+    }
+    float blend = smoothstep(6500.0, 20000.0, temperature);
+    return mix(vec3(1.0, 0.98, 0.94), vec3(0.39, 0.57, 1.0), blend);
 }
 
 vec3 starfield(vec3 direction) {
@@ -97,8 +107,8 @@ vec3 starfield(vec3 direction) {
     float latitude = abs(dot(direction, galacticNormal));
     float band = exp(-13.0 * latitude);
     float core = exp(-45.0 * latitude);
-    float nebula = fbm(direction * 4.3 + vec3(2.0, -7.0, 3.0));
-    float detail = fbm(direction * 13.0 - vec3(4.0, 1.0, 8.0));
+    float nebula = fbm3(direction * 4.3 + vec3(2.0, -7.0, 3.0));
+    float detail = valueNoise(direction * 15.0 - vec3(4.0, 1.0, 8.0));
     float dust = smoothstep(0.38, 0.72, detail);
     color += band * mix(vec3(0.012, 0.018, 0.045),
                         vec3(0.14, 0.045, 0.19), nebula) * (1.0 - 0.72 * dust);
@@ -135,7 +145,7 @@ vec3 rayAcceleration(vec3 position, vec3 velocity) {
 void integrateGeodesic(inout vec3 position, inout vec3 velocity, float stepSize) {
     // Curvature is negligible in the far field: midpoint integration halves the
     // acceleration work there, while full RK4 preserves the photon-ring geometry.
-    if (dot(position, position) > 64.0) {
+    if (dot(position, position) > 36.0) {
         vec3 firstAcceleration = rayAcceleration(position, velocity);
         vec3 midpointVelocity = normalize(velocity + firstAcceleration * (0.5 * stepSize));
         vec3 midpointPosition = position + velocity * (0.5 * stepSize);
@@ -170,7 +180,7 @@ struct MediumSample {
 MediumSample sampleAccretionFlow(vec3 point, vec3 rayDirection) {
     float cylindricalRadius = length(point.xz);
     if (cylindricalRadius < 1.08 || cylindricalRadius > DISK_OUTER_RADIUS + 0.8 ||
-        abs(point.y) > 1.1) {
+        abs(point.y) > 0.75) {
         return MediumSample(vec3(0.0), vec3(0.0));
     }
 
@@ -189,13 +199,15 @@ MediumSample sampleAccretionFlow(vec3 point, vec3 rayDirection) {
         cos(angle + uTime * orbitalRate),
         sin(angle + uTime * orbitalRate),
         normalizedRadius * 3.4 - uTime * 0.035);
-    float turbulence = fbm(flowCoordinates * vec3(6.0, 6.0, 2.2) +
-                           vec3(normalizedRadius * 11.0, 0.0, 0.0));
+    float turbulence = fbm4(flowCoordinates * vec3(6.0, 6.0, 2.2) +
+                            vec3(normalizedRadius * 11.0, 0.0, 0.0));
     float spiral = 0.5 + 0.5 * sin(angle * 18.0 - uTime * 1.65 +
                                   normalizedRadius * 72.0 + turbulence * 9.0);
     float knots = smoothstep(0.34, 0.86, turbulence * 0.7 + spiral * 0.48);
 
-    float dustNoise = fbm4(flowCoordinates * vec3(3.1, 3.1, 5.5) + vec3(8.7, 2.1, 4.3));
+    float dustNoise = mix(turbulence,
+                          valueNoise(flowCoordinates * vec3(8.5, 8.5, 12.0) +
+                                     vec3(8.7, 2.1, 4.3)), 0.38);
     float dustLane = smoothstep(0.48, 0.76, dustNoise);
     float diskMask = innerEdge * outerEdge * verticalProfile;
     float innerHeat = pow(1.0 - normalizedRadius, 1.55);
@@ -402,32 +414,50 @@ vec3 traceRay(vec3 origin, vec3 direction) {
     vec3 transmittance = vec3(1.0);
     float photonOrbitGlow = 0.0;
 
+    // Jump through the nearly flat outer region analytically. One midpoint
+    // acceleration estimate retains its small contribution to the final bend.
+    float originRadiusSquared = dot(position, position);
+    if (originRadiusSquared > FAR_FIELD_RADIUS * FAR_FIELD_RADIUS) {
+        float projection = dot(position, velocity);
+        float discriminant = projection * projection -
+                             (originRadiusSquared - FAR_FIELD_RADIUS * FAR_FIELD_RADIUS);
+        if (projection >= 0.0 || discriminant <= 0.0) {
+            return starfield(velocity);
+        }
+        float entryDistance = -projection - sqrt(discriminant);
+        vec3 midpoint = position + velocity * (entryDistance * 0.5);
+        velocity = normalize(velocity + rayAcceleration(midpoint, velocity) * entryDistance);
+        position += direction * entryDistance;
+    }
+
     for (int stepIndex = 0; stepIndex < MAX_STEPS; ++stepIndex) {
         float radius = length(position);
         if (radius <= SCHWARZSCHILD_RADIUS * 1.002) {
             return radiance;
         }
-        if (radius > ESCAPE_RADIUS && dot(position, velocity) > 0.0) {
+        if (radius > FAR_FIELD_RADIUS && dot(position, velocity) > 0.0) {
             vec3 background = starfield(velocity);
             vec3 ringEmission = vec3(1.0, 0.41, 0.085) * photonOrbitGlow * 0.016;
             return radiance + transmittance * (background + ringEmission);
         }
 
-        float stepSize = radius < 4.0
-            ? clamp(radius * 0.026, 0.008, 0.105)
-            : clamp(radius * 0.045, 0.03, 0.30);
+        float stepSize = radius < 6.0
+            ? clamp(radius * 0.03, 0.008, 0.15)
+            : clamp(radius * 0.065, 0.06, 0.65);
         float cylindricalRadius = length(position.xz);
-        if (cylindricalRadius < DISK_OUTER_RADIUS + 1.0 && abs(position.y) < 1.15) {
-            stepSize = min(stepSize, 0.075);
+        if (cylindricalRadius < DISK_OUTER_RADIUS + 1.0 && abs(position.y) < 0.78) {
+            stepSize = min(stepSize, 0.085);
         }
         vec3 previousPosition = position;
         vec3 previousVelocity = velocity;
         integrateGeodesic(position, velocity, stepSize);
 
-        vec3 angularMomentum = cross(previousPosition, previousVelocity);
-        float angularWeight = smoothstep(0.65, 1.45, length(angularMomentum));
-        photonOrbitGlow += exp(-18.0 * abs(radius - PHOTON_SPHERE_RADIUS)) *
-                           angularWeight * stepSize;
+        if (radius < 2.45) {
+            vec3 angularMomentum = cross(previousPosition, previousVelocity);
+            float angularWeight = smoothstep(0.65, 1.45, length(angularMomentum));
+            photonOrbitGlow += exp(-18.0 * abs(radius - PHOTON_SPHERE_RADIUS)) *
+                               angularWeight * stepSize;
+        }
 
         int objectIndex = -1;
         float objectT = 1.0;

@@ -1,6 +1,7 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <filesystem>
@@ -8,6 +9,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -18,9 +20,35 @@
 
 namespace {
 
+struct LaunchOptions {
+    bool retina = false;
+    bool benchmark = false;
+    bool emptyScene = false;
+    float renderScale = 0.75f;
+};
+
+LaunchOptions parseOptions(int argc, char** argv) {
+    LaunchOptions options;
+    for (int index = 1; index < argc; ++index) {
+        const std::string_view argument(argv[index]);
+        if (argument == "--retina") {
+            options.retina = true;
+            options.renderScale = 1.0f;
+        } else if (argument == "--quality") {
+            options.renderScale = 1.0f;
+        } else if (argument == "--benchmark") {
+            options.benchmark = true;
+        } else if (argument == "--empty") {
+            options.emptyScene = true;
+        }
+    }
+    return options;
+}
+
 struct AppState {
     OrbitCamera camera;
     SceneObjects sceneObjects;
+    float renderScale = 0.75f;
     bool dragging = false;
     double previousX = 0.0;
     double previousY = 0.0;
@@ -52,6 +80,9 @@ void keyCallback(GLFWwindow* window, int key, int, int action, int) {
         break;
     case GLFW_KEY_R:
         state->camera.reset();
+        break;
+    case GLFW_KEY_Q:
+        state->renderScale = state->renderScale < 0.9f ? 1.0f : 0.75f;
         break;
     default:
         break;
@@ -97,17 +128,76 @@ void scrollCallback(GLFWwindow* window, double, double yOffset) {
 }
 
 std::filesystem::path shaderPath(const char* executablePath, const char* shaderName) {
+    // Prefer live source shaders during development so editing GLSL never runs a
+    // stale copied file when the C++ target itself did not need relinking.
+    const auto sourcePath = std::filesystem::path(BLACK_HOLE_SHADER_DIR) / shaderName;
+    if (std::filesystem::exists(sourcePath)) {
+        return sourcePath;
+    }
     const auto executableDirectory = std::filesystem::absolute(executablePath).parent_path();
     const auto bundledPath = executableDirectory / "shaders" / shaderName;
     if (std::filesystem::exists(bundledPath)) {
         return bundledPath;
     }
-    return std::filesystem::path(BLACK_HOLE_SHADER_DIR) / shaderName;
+    return sourcePath;
 }
+
+class RenderTarget {
+public:
+    RenderTarget() {
+        glGenFramebuffers(1, &framebuffer_);
+        glGenTextures(1, &colorTexture_);
+        glBindTexture(GL_TEXTURE_2D, colorTexture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    }
+
+    ~RenderTarget() {
+        glDeleteTextures(1, &colorTexture_);
+        glDeleteFramebuffers(1, &framebuffer_);
+    }
+
+    RenderTarget(const RenderTarget&) = delete;
+    RenderTarget& operator=(const RenderTarget&) = delete;
+
+    void resize(int width, int height) {
+        if (width == width_ && height == height_) {
+            return;
+        }
+        width_ = width;
+        height_ = height;
+
+        glBindTexture(GL_TEXTURE_2D, colorTexture_);
+        // The ray shader has already tone-mapped and dithered its output, so an
+        // 8-bit target avoids needless Retina presentation bandwidth.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width_, height_, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, colorTexture_, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            throw std::runtime_error("Failed to create the offscreen render target.");
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void bind() const { glBindFramebuffer(GL_FRAMEBUFFER, framebuffer_); }
+    [[nodiscard]] GLuint colorTexture() const { return colorTexture_; }
+
+private:
+    GLuint framebuffer_ = 0;
+    GLuint colorTexture_ = 0;
+    int width_ = 0;
+    int height_ = 0;
+};
 
 } // namespace
 
 int main(int argc, char** argv) {
+    const LaunchOptions launchOptions = parseOptions(argc, argv);
     glfwSetErrorCallback(glfwErrorCallback);
     if (glfwInit() != GLFW_TRUE) {
         std::cerr << "Failed to initialize GLFW.\n";
@@ -153,6 +243,10 @@ int main(int argc, char** argv) {
               << glGetString(GL_RENDERER) << '\n';
 
     AppState state;
+    state.renderScale = launchOptions.renderScale;
+    if (launchOptions.emptyScene) {
+        state.sceneObjects.clear();
+    }
     glfwSetWindowUserPointer(window, &state);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
     glfwSetKeyCallback(window, keyCallback);
@@ -164,6 +258,7 @@ int main(int argc, char** argv) {
     int framebufferHeight = 0;
     glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
     glViewport(0, 0, framebufferWidth, framebufferHeight);
+    std::cout << "Output surface: " << framebufferWidth << 'x' << framebufferHeight << '\n';
 
     GLuint fullscreenVertexArray = 0;
     glGenVertexArrays(1, &fullscreenVertexArray);
@@ -173,6 +268,12 @@ int main(int argc, char** argv) {
         Shader shader(
             shaderPath(argc > 0 ? argv[0] : "", "blackhole.vert").string(),
             shaderPath(argc > 0 ? argv[0] : "", "blackhole.frag").string());
+        Shader presentShader(
+            shaderPath(argc > 0 ? argv[0] : "", "blackhole.vert").string(),
+            shaderPath(argc > 0 ? argv[0] : "", "present.frag").string());
+        RenderTarget renderTarget;
+        presentShader.use();
+        presentShader.setInt("uScene", 0);
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
@@ -181,11 +282,15 @@ int main(int argc, char** argv) {
 
         double previousTime = glfwGetTime();
         double previousTitleUpdate = previousTime;
+        double previousBenchmarkLog = previousTime;
         unsigned int framesSinceTitleUpdate = 0;
+        unsigned int framesSinceBenchmarkLog = 0;
         std::array<glm::vec4, SceneObjects::MaxObjects> positionRadius{};
         std::array<glm::vec4, SceneObjects::MaxObjects> colorRoughness{};
         std::array<glm::vec4, SceneObjects::MaxObjects> velocities{};
         std::array<glm::vec4, SceneObjects::MaxObjects> objectProperties{};
+        int renderWidth = 1280;
+        int renderHeight = 720;
 
         while (glfwWindowShouldClose(window) == GLFW_FALSE) {
             glfwPollEvents();
@@ -195,6 +300,18 @@ int main(int argc, char** argv) {
             previousTime = currentTime;
             state.sceneObjects.update(deltaTime);
             ++framesSinceTitleUpdate;
+            ++framesSinceBenchmarkLog;
+
+            if (launchOptions.benchmark && currentTime - previousBenchmarkLog >= 2.0) {
+                const double interval = currentTime - previousBenchmarkLog;
+                const double measuredFps = static_cast<double>(framesSinceBenchmarkLog) / interval;
+                std::cout << "Benchmark: " << static_cast<int>(measuredFps + 0.5)
+                          << " FPS, internal " << renderWidth << 'x' << renderHeight
+                          << ", output " << framebufferWidth << 'x' << framebufferHeight
+                          << ", " << state.sceneObjects.size() << " fragments" << std::endl;
+                previousBenchmarkLog = currentTime;
+                framesSinceBenchmarkLog = 0;
+            }
 
             if (currentTime - previousTitleUpdate > 0.5) {
                 const double titleInterval = currentTime - previousTitleUpdate;
@@ -217,16 +334,34 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-            const float aspect = static_cast<float>(framebufferWidth) /
-                                 static_cast<float>(framebufferHeight);
+            int windowWidth = 0;
+            int windowHeight = 0;
+            glfwGetWindowSize(window, &windowWidth, &windowHeight);
+            const int baseRenderWidth = launchOptions.retina
+                ? framebufferWidth
+                : std::min(framebufferWidth, std::max(windowWidth, 1));
+            const int baseRenderHeight = launchOptions.retina
+                ? framebufferHeight
+                : std::min(framebufferHeight, std::max(windowHeight, 1));
+            renderWidth = std::max(1, static_cast<int>(
+                static_cast<float>(baseRenderWidth) * state.renderScale + 0.5f));
+            renderHeight = std::max(1, static_cast<int>(
+                static_cast<float>(baseRenderHeight) * state.renderScale + 0.5f));
+            renderTarget.resize(renderWidth, renderHeight);
+
+            const float aspect = static_cast<float>(renderWidth) /
+                                 static_cast<float>(renderHeight);
             const glm::mat4 viewProjection =
                 state.camera.projectionMatrix(aspect) * state.camera.viewMatrix();
 
+            renderTarget.bind();
+            glViewport(0, 0, renderWidth, renderHeight);
+            glDisable(GL_FRAMEBUFFER_SRGB);
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
             shader.use();
-            shader.setVec2("uResolution", glm::vec2(framebufferWidth, framebufferHeight));
+            shader.setVec2("uResolution", glm::vec2(renderWidth, renderHeight));
             shader.setFloat("uTime", static_cast<float>(glfwGetTime()));
             shader.setVec3("uCameraPosition", state.camera.position());
             shader.setMat4("uInverseViewProjection", glm::inverse(viewProjection));
@@ -253,6 +388,14 @@ int main(int argc, char** argv) {
                                 std::span<const glm::vec4>(objectProperties.data(), objectCount));
 
             glBindVertexArray(fullscreenVertexArray);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, framebufferWidth, framebufferHeight);
+            glEnable(GL_FRAMEBUFFER_SRGB);
+            presentShader.use();
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, renderTarget.colorTexture());
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glfwSwapBuffers(window);
         }

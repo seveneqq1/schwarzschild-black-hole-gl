@@ -55,6 +55,7 @@ add_custom_command(TARGET schwarzschild_black_hole POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/blackhole.vert"
             "${CMAKE_CURRENT_SOURCE_DIR}/blackhole.frag"
+            "${CMAKE_CURRENT_SOURCE_DIR}/present.frag"
             "$<TARGET_FILE_DIR:schwarzschild_black_hole>/shaders"
     COMMENT "Copying GLSL shaders")
 
