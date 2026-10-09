@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -73,12 +74,23 @@ public:
         glUniform1f(location(name), value);
     }
 
+    void setInt(const char* name, int value) const {
+        glUniform1i(location(name), value);
+    }
+
     void setVec2(const char* name, const glm::vec2& value) const {
         glUniform2fv(location(name), 1, glm::value_ptr(value));
     }
 
     void setVec3(const char* name, const glm::vec3& value) const {
         glUniform3fv(location(name), 1, glm::value_ptr(value));
+    }
+
+    void setVec4Array(const char* name, std::span<const glm::vec4> values) const {
+        if (!values.empty()) {
+            glUniform4fv(location(name), static_cast<GLsizei>(values.size()),
+                         glm::value_ptr(values.front()));
+        }
     }
 
     void setMat4(const char* name, const glm::mat4& value) const {

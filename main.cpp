@@ -1,9 +1,11 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -11,16 +13,50 @@
 #include <glm/gtc/matrix_inverse.hpp>
 
 #include "Camera.hpp"
+#include "SceneObjects.hpp"
 #include "Shader.hpp"
 
 namespace {
 
 struct AppState {
     OrbitCamera camera;
+    SceneObjects sceneObjects;
     bool dragging = false;
     double previousX = 0.0;
     double previousY = 0.0;
 };
+
+void keyCallback(GLFWwindow* window, int key, int, int action, int) {
+    if (action != GLFW_PRESS) {
+        return;
+    }
+
+    auto* state = static_cast<AppState*>(glfwGetWindowUserPointer(window));
+    switch (key) {
+    case GLFW_KEY_ESCAPE:
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+        break;
+    case GLFW_KEY_SPACE:
+        if (!state->sceneObjects.spawnInfallingObject()) {
+            std::cout << "Object limit reached (" << SceneObjects::MaxObjects << ").\n";
+        }
+        break;
+    case GLFW_KEY_BACKSPACE:
+        state->sceneObjects.clear();
+        break;
+    case GLFW_KEY_O:
+        state->sceneObjects.reset();
+        break;
+    case GLFW_KEY_P:
+        state->sceneObjects.togglePaused();
+        break;
+    case GLFW_KEY_R:
+        state->camera.reset();
+        break;
+    default:
+        break;
+    }
+}
 
 void glfwErrorCallback(int error, const char* description) {
     std::cerr << "GLFW error " << error << ": " << description << '\n';
@@ -119,6 +155,7 @@ int main(int argc, char** argv) {
     AppState state;
     glfwSetWindowUserPointer(window, &state);
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+    glfwSetKeyCallback(window, keyCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetCursorPosCallback(window, cursorPositionCallback);
     glfwSetScrollCallback(window, scrollCallback);
@@ -142,13 +179,25 @@ int main(int argc, char** argv) {
         // The window was requested with an sRGB-capable default framebuffer.
         glEnable(GL_FRAMEBUFFER_SRGB);
 
+        double previousTime = glfwGetTime();
+        double previousTitleUpdate = previousTime;
+
         while (glfwWindowShouldClose(window) == GLFW_FALSE) {
             glfwPollEvents();
-            if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-                glfwSetWindowShouldClose(window, GLFW_TRUE);
-            }
-            if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-                state.camera.reset();
+
+            const double currentTime = glfwGetTime();
+            const float deltaTime = static_cast<float>(currentTime - previousTime);
+            previousTime = currentTime;
+            state.sceneObjects.update(deltaTime);
+
+            if (currentTime - previousTitleUpdate > 0.25) {
+                std::string title = "Schwarzschild Black Hole — ";
+                title += std::to_string(state.sceneObjects.size()) + " objects";
+                if (state.sceneObjects.paused()) {
+                    title += " (paused)";
+                }
+                glfwSetWindowTitle(window, title.c_str());
+                previousTitleUpdate = currentTime;
             }
 
             glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
@@ -170,6 +219,25 @@ int main(int argc, char** argv) {
             shader.setFloat("uTime", static_cast<float>(glfwGetTime()));
             shader.setVec3("uCameraPosition", state.camera.position());
             shader.setMat4("uInverseViewProjection", glm::inverse(viewProjection));
+
+            std::array<glm::vec4, SceneObjects::MaxObjects> positionRadius{};
+            std::array<glm::vec4, SceneObjects::MaxObjects> colorRoughness{};
+            std::array<glm::vec4, SceneObjects::MaxObjects> velocities{};
+            const auto& objects = state.sceneObjects.objects();
+            for (std::size_t index = 0; index < objects.size(); ++index) {
+                const SceneObject& object = objects[index];
+                positionRadius[index] = glm::vec4(object.position, object.radius);
+                colorRoughness[index] = glm::vec4(object.albedo, object.roughness);
+                velocities[index] = glm::vec4(object.velocity, 0.0f);
+            }
+            const std::size_t objectCount = objects.size();
+            shader.setInt("uObjectCount", static_cast<int>(objectCount));
+            shader.setVec4Array("uObjectPositionRadius[0]",
+                                std::span<const glm::vec4>(positionRadius.data(), objectCount));
+            shader.setVec4Array("uObjectColorRoughness[0]",
+                                std::span<const glm::vec4>(colorRoughness.data(), objectCount));
+            shader.setVec4Array("uObjectVelocity[0]",
+                                std::span<const glm::vec4>(velocities.data(), objectCount));
 
             glBindVertexArray(fullscreenVertexArray);
             glDrawArrays(GL_TRIANGLES, 0, 3);

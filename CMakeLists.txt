@@ -29,6 +29,7 @@ find_package(GLEW REQUIRED)
 add_executable(schwarzschild_black_hole
     main.cpp
     Camera.hpp
+    SceneObjects.hpp
     Shader.hpp)
 
 target_compile_features(schwarzschild_black_hole PRIVATE cxx_std_20)
