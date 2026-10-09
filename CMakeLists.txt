@@ -57,3 +57,12 @@ add_custom_command(TARGET schwarzschild_black_hole POST_BUILD
             "${CMAKE_CURRENT_SOURCE_DIR}/blackhole.frag"
             "$<TARGET_FILE_DIR:schwarzschild_black_hole>/shaders"
     COMMENT "Copying GLSL shaders")
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(scene_objects_test tests/SceneObjectsTest.cpp)
+    target_include_directories(scene_objects_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(scene_objects_test PRIVATE glm::glm)
+    target_compile_features(scene_objects_test PRIVATE cxx_std_20)
+    add_test(NAME scene_objects_physics COMMAND scene_objects_test)
+endif()

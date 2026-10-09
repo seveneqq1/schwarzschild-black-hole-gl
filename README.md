@@ -3,9 +3,11 @@
 A standalone C++20/macOS visualization of a Schwarzschild black hole. Light rays
 are integrated with RK4 in a GLSL 4.10 fragment shader, producing an event-horizon
 shadow, a photon ring, gravitationally lensed procedural stars and nebulae, and a
-volumetric turbulent accretion flow with Doppler beaming and gravitational redshift.
-Individually simulated objects orbit, lose angular momentum, heat up, lens correctly,
-and disappear after crossing the event horizon.
+volumetric turbulent accretion flow with wavelength-dependent dust extinction,
+blackbody color, Doppler beaming, gravitational redshift, and orbiting particles.
+Individually simulated objects orbit, lose angular momentum, stretch under tidal
+forces, fracture into hot debris, lens correctly, and disappear after crossing the
+event horizon.
 
 ## Requirements
 
@@ -32,7 +34,7 @@ cmake --build build --parallel
 
 - Left mouse drag: orbit the camera
 - Scroll: zoom
-- `Space`: spawn one infalling object (up to 16)
+- `Space`: spawn one infalling object (up to 24 bodies/fragments)
 - `Backspace`: remove all objects
 - `O`: reset the default objects
 - `P`: pause/resume object physics
@@ -51,6 +53,7 @@ satellite.velocity = {-0.04f, 0.0f, 0.18f};
 satellite.radius = 0.3f;
 satellite.albedo = {0.2f, 0.55f, 0.9f};
 satellite.roughness = 0.35f;
+satellite.cohesion = 0.8f; // Lower values break apart slightly earlier.
 state.sceneObjects.addObject(satellite);
 ```
 
@@ -64,3 +67,6 @@ inside `blackhole.frag`. Dynamic bodies are passed through ordinary uniform arra
 keeping the renderer within OpenGL 4.1 Core: there are no compute shaders, shader
 storage buffers, or post-4.1 extension dependencies. This remains a physically
 inspired real-time visualization rather than a precision general-relativity solver.
+The ray marcher uses RK4 near the black hole and midpoint integration in weak-field
+space, adaptive disk sampling, broad-phase fragment culling, and cached uniform
+locations to reduce GPU and CPU work without reducing near-hole detail.

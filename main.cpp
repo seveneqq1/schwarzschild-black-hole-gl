@@ -181,6 +181,11 @@ int main(int argc, char** argv) {
 
         double previousTime = glfwGetTime();
         double previousTitleUpdate = previousTime;
+        unsigned int framesSinceTitleUpdate = 0;
+        std::array<glm::vec4, SceneObjects::MaxObjects> positionRadius{};
+        std::array<glm::vec4, SceneObjects::MaxObjects> colorRoughness{};
+        std::array<glm::vec4, SceneObjects::MaxObjects> velocities{};
+        std::array<glm::vec4, SceneObjects::MaxObjects> objectProperties{};
 
         while (glfwWindowShouldClose(window) == GLFW_FALSE) {
             glfwPollEvents();
@@ -189,15 +194,21 @@ int main(int argc, char** argv) {
             const float deltaTime = static_cast<float>(currentTime - previousTime);
             previousTime = currentTime;
             state.sceneObjects.update(deltaTime);
+            ++framesSinceTitleUpdate;
 
-            if (currentTime - previousTitleUpdate > 0.25) {
+            if (currentTime - previousTitleUpdate > 0.5) {
+                const double titleInterval = currentTime - previousTitleUpdate;
+                const int framesPerSecond = static_cast<int>(
+                    static_cast<double>(framesSinceTitleUpdate) / titleInterval + 0.5);
                 std::string title = "Schwarzschild Black Hole — ";
-                title += std::to_string(state.sceneObjects.size()) + " objects";
+                title += std::to_string(state.sceneObjects.size()) + " fragments — ";
+                title += std::to_string(framesPerSecond) + " FPS";
                 if (state.sceneObjects.paused()) {
                     title += " (paused)";
                 }
                 glfwSetWindowTitle(window, title.c_str());
                 previousTitleUpdate = currentTime;
+                framesSinceTitleUpdate = 0;
             }
 
             glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
@@ -220,15 +231,15 @@ int main(int argc, char** argv) {
             shader.setVec3("uCameraPosition", state.camera.position());
             shader.setMat4("uInverseViewProjection", glm::inverse(viewProjection));
 
-            std::array<glm::vec4, SceneObjects::MaxObjects> positionRadius{};
-            std::array<glm::vec4, SceneObjects::MaxObjects> colorRoughness{};
-            std::array<glm::vec4, SceneObjects::MaxObjects> velocities{};
             const auto& objects = state.sceneObjects.objects();
             for (std::size_t index = 0; index < objects.size(); ++index) {
                 const SceneObject& object = objects[index];
                 positionRadius[index] = glm::vec4(object.position, object.radius);
                 colorRoughness[index] = glm::vec4(object.albedo, object.roughness);
                 velocities[index] = glm::vec4(object.velocity, 0.0f);
+                objectProperties[index] = glm::vec4(
+                    static_cast<float>(object.fractureLevel), object.seed,
+                    SceneObjects::tidalStretch(object), object.cohesion);
             }
             const std::size_t objectCount = objects.size();
             shader.setInt("uObjectCount", static_cast<int>(objectCount));
@@ -238,6 +249,8 @@ int main(int argc, char** argv) {
                                 std::span<const glm::vec4>(colorRoughness.data(), objectCount));
             shader.setVec4Array("uObjectVelocity[0]",
                                 std::span<const glm::vec4>(velocities.data(), objectCount));
+            shader.setVec4Array("uObjectProperties[0]",
+                                std::span<const glm::vec4>(objectProperties.data(), objectCount));
 
             glBindVertexArray(fullscreenVertexArray);
             glDrawArrays(GL_TRIANGLES, 0, 3);

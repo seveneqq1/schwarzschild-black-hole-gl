@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -55,7 +56,10 @@ public:
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;
 
-    Shader(Shader&& other) noexcept : program_(other.program_) { other.program_ = 0; }
+    Shader(Shader&& other) noexcept
+        : program_(other.program_), locations_(std::move(other.locations_)) {
+        other.program_ = 0;
+    }
 
     Shader& operator=(Shader&& other) noexcept {
         if (this != &other) {
@@ -63,6 +67,7 @@ public:
                 glDeleteProgram(program_);
             }
             program_ = other.program_;
+            locations_ = std::move(other.locations_);
             other.program_ = 0;
         }
         return *this;
@@ -99,6 +104,7 @@ public:
 
 private:
     GLuint program_ = 0;
+    mutable std::unordered_map<std::string, GLint> locations_;
 
     static std::string readFile(const std::string& path) {
         std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -130,6 +136,11 @@ private:
     }
 
     GLint location(const char* name) const {
-        return glGetUniformLocation(program_, name);
+        if (const auto found = locations_.find(name); found != locations_.end()) {
+            return found->second;
+        }
+        const GLint result = glGetUniformLocation(program_, name);
+        locations_.emplace(name, result);
+        return result;
     }
 };
