@@ -363,6 +363,7 @@ int main(int argc, char** argv) {
             shader.use();
             shader.setVec2("uResolution", glm::vec2(renderWidth, renderHeight));
             shader.setFloat("uTime", static_cast<float>(glfwGetTime()));
+            shader.setFloat("uFallbackLuminosity", state.sceneObjects.fallbackLuminosity());
             shader.setVec3("uCameraPosition", state.camera.position());
             shader.setMat4("uInverseViewProjection", glm::inverse(viewProjection));
 
@@ -374,7 +375,7 @@ int main(int argc, char** argv) {
                 velocities[index] = glm::vec4(object.velocity, 0.0f);
                 objectProperties[index] = glm::vec4(
                     static_cast<float>(object.fractureLevel), object.seed,
-                    SceneObjects::tidalStretch(object), object.cohesion);
+                    object.tidalStrain, object.internalEnergy);
             }
             const std::size_t objectCount = objects.size();
             shader.setInt("uObjectCount", static_cast<int>(objectCount));

@@ -5,9 +5,9 @@ are integrated with RK4 in a GLSL 4.10 fragment shader, producing an event-horiz
 shadow, a photon ring, gravitationally lensed procedural stars and nebulae, and a
 volumetric turbulent accretion flow with wavelength-dependent dust extinction,
 blackbody color, Doppler beaming, gravitational redshift, and orbiting particles.
-Individually simulated objects orbit, lose angular momentum, stretch under tidal
-forces, fracture into hot debris, lens correctly, and disappear after crossing the
-event horizon.
+Individually simulated objects undergo stress-based tidal failure, radial stretching,
+transverse compression, partial core survival, ballistic debris-stream formation,
+collision heating, fallback brightening, gravitational lensing, and horizon capture.
 
 ## Requirements
 
@@ -60,12 +60,16 @@ satellite.velocity = {-0.04f, 0.0f, 0.18f};
 satellite.radius = 0.3f;
 satellite.albedo = {0.2f, 0.55f, 0.9f};
 satellite.roughness = 0.35f;
-satellite.cohesion = 0.8f; // Lower values break apart slightly earlier.
+satellite.density = 0.9f;
+satellite.cohesion = 0.8f; // Lower values accumulate tidal damage earlier.
 state.sceneObjects.addObject(satellite);
 ```
 
 Position and radius use units where the event-horizon radius is `1.0`. Velocity
 uses units where the speed of light is `1.0`.
+
+The disruption approximation and its source literature are described in
+[PHYSICS.md](PHYSICS.md).
 
 ## Implementation notes
 

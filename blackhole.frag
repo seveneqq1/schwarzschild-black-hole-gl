@@ -5,6 +5,7 @@ out vec4 fragColor;
 
 uniform vec2 uResolution;
 uniform float uTime;
+uniform float uFallbackLuminosity;
 uniform vec3 uCameraPosition;
 uniform mat4 uInverseViewProjection;
 
@@ -13,7 +14,7 @@ uniform int uObjectCount;
 uniform vec4 uObjectPositionRadius[MAX_OBJECTS];
 uniform vec4 uObjectColorRoughness[MAX_OBJECTS];
 uniform vec4 uObjectVelocity[MAX_OBJECTS];
-uniform vec4 uObjectProperties[MAX_OBJECTS]; // fracture level, seed, tidal stretch, cohesion
+uniform vec4 uObjectProperties[MAX_OBJECTS]; // fracture level, seed, tidal strain, heat
 
 const float PI = 3.141592653589793;
 const float SCHWARZSCHILD_RADIUS = 1.0;
@@ -221,7 +222,8 @@ MediumSample sampleAccretionFlow(vec3 point, vec3 rayDirection) {
                                            SCHWARZSCHILD_RADIUS / cylindricalRadius));
     float density = diskMask * (0.42 + 2.15 * knots + 1.35 * dustLane);
     vec3 emission = emissionColor * gravitationalRedshift * pow(doppler, 2.4) *
-                    (0.55 + 3.0 * knots) * (1.0 - 0.62 * dustLane);
+                    (0.55 + 3.0 * knots) * (1.0 - 0.62 * dustLane) *
+                    (1.0 + 0.7 * uFallbackLuminosity);
 
     // Sparse orbiting grains create resolved incandescent particle highlights.
     float rotation = uTime * orbitalRate * 0.72;
@@ -248,7 +250,8 @@ MediumSample sampleAccretionFlow(vec3 point, vec3 rayDirection) {
     float coronaRadial = smoothstep(1.12, 1.55, cylindricalRadius) *
                          (1.0 - smoothstep(2.7, 4.2, cylindricalRadius));
     float corona = coronaRadial * exp(-abs(point.y) * 2.4) * 0.045;
-    emission += blackbodyColor(18000.0) * corona * 2.2;
+    emission += blackbodyColor(18000.0) * corona *
+                (2.2 + 1.4 * uFallbackLuminosity);
     density += corona;
     vec3 wavelengthExtinction = vec3(0.62, 0.92, 1.34);
     vec3 extinction = density * mix(vec3(1.0), wavelengthExtinction,
@@ -261,7 +264,7 @@ void objectFrame(int index, out vec3 radial, out vec3 tangent,
     vec3 center = uObjectPositionRadius[index].xyz;
     float radius = uObjectPositionRadius[index].w;
     vec3 velocity = uObjectVelocity[index].xyz;
-    float stretch = uObjectProperties[index].z;
+    float stretch = clamp(uObjectProperties[index].z, 0.0, 1.8);
     radial = normalize(center);
     tangent = velocity - radial * dot(velocity, radial);
     if (dot(tangent, tangent) < 0.0001) {
@@ -272,9 +275,11 @@ void objectFrame(int index, out vec3 radial, out vec3 tangent,
     }
     tangent = normalize(tangent);
     bitangent = normalize(cross(radial, tangent));
-    axes = radius * vec3(1.0 + 1.15 * stretch,
-                         max(0.46, 1.0 - 0.34 * stretch),
-                         max(0.52, 1.0 - 0.28 * stretch));
+    // Schwarzschild's (+2, -1, -1) tidal eigenvalues stretch radially and
+    // compress both transverse axes. The reciprocal square root conserves volume.
+    float radialScale = 1.0 + 1.7 * stretch;
+    float transverseScale = max(0.28, inversesqrt(radialScale));
+    axes = radius * vec3(radialScale, transverseScale, transverseScale);
 }
 
 bool segmentObject(vec3 start, vec3 end, int index, out float hitT) {
@@ -342,7 +347,7 @@ bool nearestObjectHit(vec3 start, vec3 end, out int objectIndex, out float hitT,
                               smoothstep(0.2, 0.035, length(local - offset * 0.7));
                 vec3 debrisColor = mix(uObjectColorRoughness[index].rgb,
                                        vec3(1.0, 0.22, 0.025),
-                                       uObjectProperties[index].z * 0.65);
+                                       clamp(uObjectProperties[index].z * 0.65, 0.0, 1.0));
                 debrisGlow += debrisColor * speck * envelope *
                               (2.0 + 1.8 * fractureLevel);
             }
@@ -371,6 +376,7 @@ vec3 shadeObject(int index, vec3 hitPoint, vec3 rayDirection) {
     float fractureLevel = uObjectProperties[index].x;
     float seed = uObjectProperties[index].y;
     float stretch = uObjectProperties[index].z;
+    float internalEnergy = uObjectProperties[index].w;
 
     float surfaceNoise = fbm(normal * 4.5 + vec3(seed * 17.0));
     float craters = smoothstep(0.31, 0.52, valueNoise(normal * 13.0 + vec3(seed * 29.0)));
@@ -386,7 +392,8 @@ vec3 shadeObject(int index, vec3 hitPoint, vec3 rayDirection) {
     float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.2);
 
     float distanceToHole = length(hitPoint);
-    float tidalHeat = 1.0 - smoothstep(1.2, 4.5, distanceToHole);
+    float tidalHeat = clamp((1.0 - smoothstep(1.2, 4.5, distanceToHole)) * 0.62 +
+                            internalEnergy, 0.0, 1.35);
     float redshift = sqrt(max(0.0, 1.0 - SCHWARZSCHILD_RADIUS / distanceToHole));
     float relativeMotion = dot(velocity, viewDirection);
     float doppler = clamp(1.0 + relativeMotion * 1.6, 0.55, 1.65);
