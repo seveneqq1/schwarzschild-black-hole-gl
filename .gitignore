@@ -1,4 +1,21 @@
+# Build output
 /build/
-/.DS_Store
+/out/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+*.exe
+*.obj
+*.o
+
+# Captures and scratch
+/shots/
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
 *.xcodeproj/
 *.xcworkspace/
+.DS_Store
+Thumbs.db

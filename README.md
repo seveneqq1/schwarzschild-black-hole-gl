@@ -1,84 +1,102 @@
-# Schwarzschild Black Hole — OpenGL 4.1
+# Schwarzschild Black Hole — Real-Time OpenGL 4.1
 
-A standalone C++20/macOS visualization of a Schwarzschild black hole. Light rays
-are integrated with RK4 in a GLSL 4.10 fragment shader, producing an event-horizon
-shadow, a photon ring, gravitationally lensed procedural stars and nebulae, and a
-volumetric turbulent accretion flow with wavelength-dependent dust extinction,
-blackbody color, Doppler beaming, gravitational redshift, and orbiting particles.
-Individually simulated objects undergo stress-based tidal failure, radial stretching,
-transverse compression, partial core survival, ballistic debris-stream formation,
-collision heating, fallback brightening, gravitational lensing, and horizon capture.
+A real-time C++20 / OpenGL 4.1 renderer of a Schwarzschild black hole with a
+physically motivated accretion disk and tidal disruption of infalling bodies.
+
+## Features
+
+- **Exact lensing:** null geodesics integrated per pixel (Binet equation, RK4) give the
+  shadow, photon ring, secondary image and correctly magnified stars and Milky Way.
+- **Accretion disk:** Page–Thorne / Novikov–Thorne temperature profile, Doppler and
+  gravitational redshift, Chandrasekhar limb darkening, flow-advected turbulence.
+- **Tidal disruption:** Roche ellipsoids (Chandrasekhar), Kelvin f-mode, L1/L2 mass
+  shedding, clump formation, collisions, disk drag, radiative cooling, dust sublimation.
+- **Debris rendering:** GPU-splatted 3D volumes with emission, absorption and scattering.
+- **Post-processing:** blackbody colour LUT (Wyman et al. 2013), bloom, ACES tone mapping.
+
+See [PHYSICS.md](PHYSICS.md) for the model details.
 
 ## Requirements
 
-- macOS on Apple Silicon or Intel
-- Xcode Command Line Tools
-- CMake 3.20+
-- GLFW, GLM, and GLEW
+- A GPU/driver supporting **OpenGL 4.1 Core**
+- **CMake 3.20+** and a **C++20** compiler
+- Libraries: **GLFW 3**, **GLEW**, **GLM**, **zlib**
 
-Install the dependencies with Homebrew:
+## macOS
+
+Install the toolchain and libraries (Homebrew):
 
 ```bash
-brew install cmake glfw glm glew
+xcode-select --install
+brew install cmake glfw glew glm
 ```
 
-## Build and run
+Clone, build, run (works from any directory):
 
 ```bash
+git clone https://github.com/seveneqq1/schwarzschild-black-hole-gl.git
+cd schwarzschild-black-hole-gl
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake --build build -j
 ./build/schwarzschild_black_hole
 ```
 
-The app always covers the native Retina framebuffer, but the expensive ray pass uses
-an offscreen target and a fullscreen upscale. The default 960×540 performance mode
-is intended for smooth interaction. Use `--quality` for 1280×720 ray tracing or
-`--retina` for native-density rendering. Add `--benchmark` to print measured FPS
-every two seconds.
+## Windows
+
+Install [Visual Studio 2022](https://visualstudio.microsoft.com/) (with "Desktop
+development with C++"), [CMake](https://cmake.org/download/) and
+[Git](https://git-scm.com/). Get the libraries with
+[vcpkg](https://github.com/microsoft/vcpkg).
+
+In **PowerShell**:
+
+```powershell
+git clone https://github.com/microsoft/vcpkg $HOME\vcpkg
+& $HOME\vcpkg\bootstrap-vcpkg.bat
+& $HOME\vcpkg\vcpkg install glfw3:x64-windows glew:x64-windows glm:x64-windows zlib:x64-windows
+
+git clone https://github.com/seveneqq1/schwarzschild-black-hole-gl.git
+cd schwarzschild-black-hole-gl
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE="$HOME\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build --config Release
+.\build\Release\schwarzschild_black_hole.exe
+```
+
+> Windows support is provided on a best-effort basis; the project was developed on macOS.
+> If the window fails to open, update your GPU driver (OpenGL 4.1+ is required).
+
+## Command-line options
+
+| Option | Effect |
+|---|---|
+| `--retina` / `--quality` | Render at full framebuffer resolution |
+| `--fast` | Render at half resolution |
+| `--benchmark` | Print FPS and GPU timings |
+| `--spawn n` | Spawn `n` extra bodies |
+| `--camera yaw,pitch,dist` | Set the initial camera |
+| `--capture file.png` | Save a screenshot and exit (with `--warmup s` to skip ahead) |
+| `--exit-after s` | Quit after `s` seconds |
+| `--empty` | Start without bodies |
+
+Example: `./build/schwarzschild_black_hole --retina --camera 125,28,10`
 
 ## Controls
 
-- Left mouse drag: orbit the camera
-- Scroll: zoom
-- `Space`: spawn one infalling object (up to 24 bodies/fragments)
-- `Backspace`: remove all objects
-- `O`: reset the default objects
-- `P`: pause/resume object physics
-- `Q`: toggle performance/quality render resolution
-- `R`: reset the camera
-- `Esc`: quit
+| Key | Action |
+|---|---|
+| `Q` | Cycle render scale (0.5 / 0.75 / 1.0) |
+| `B` | Toggle bloom |
+| `[` / `]` | Slower / faster time |
+| `-` / `=` | Exposure |
+| `Space`, `Backspace`, `O`, `P`, `R`, `Esc` | See `main.cpp` |
 
-## Adding custom objects
+## Tests
 
-`SceneObjects.hpp` exposes a small API. Add a body anywhere you have access to the
-`SceneObjects` instance:
-
-```cpp
-SceneObject satellite;
-satellite.position = {8.0f, 1.0f, 0.0f};
-satellite.velocity = {-0.04f, 0.0f, 0.18f};
-satellite.radius = 0.3f;
-satellite.albedo = {0.2f, 0.55f, 0.9f};
-satellite.roughness = 0.35f;
-satellite.density = 0.9f;
-satellite.cohesion = 0.8f; // Lower values accumulate tidal damage earlier.
-state.sceneObjects.addObject(satellite);
+```bash
+cmake --build build --target scene_objects_test
+ctest --test-dir build        # add -C Release on Windows
 ```
 
-Position and radius use units where the event-horizon radius is `1.0`. Velocity
-uses units where the speed of light is `1.0`.
+## License
 
-The disruption approximation and its source literature are described in
-[PHYSICS.md](PHYSICS.md).
-
-## Implementation notes
-
-The renderer uses one oversized fullscreen triangle and performs all scene work
-inside `blackhole.frag`. Dynamic bodies are passed through ordinary uniform arrays,
-keeping the renderer within OpenGL 4.1 Core: there are no compute shaders, shader
-storage buffers, or post-4.1 extension dependencies. This remains a physically
-inspired real-time visualization rather than a precision general-relativity solver.
-The ray marcher uses RK4 only in strong-field space and midpoint integration farther
-out, exits after leaving the lensing region, adaptively samples the disk, culls
-fragments with a broad phase, and caches uniform locations. Noise octaves are reserved
-for scales that remain visible at the output resolution.
+MIT — see [LICENSE](LICENSE).
