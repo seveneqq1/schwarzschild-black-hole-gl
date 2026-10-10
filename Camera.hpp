@@ -17,6 +17,14 @@ public:
         distance_ = 18.0f;
     }
 
+    void set(float yawDegrees, float pitchDegrees, float distance) {
+        yaw_ = glm::radians(yawDegrees);
+        pitch_ = std::clamp(glm::radians(pitchDegrees), glm::radians(-85.0f), glm::radians(85.0f));
+        distance_ = std::clamp(distance, 7.0f, 35.0f);
+    }
+
+    [[nodiscard]] static float verticalFieldOfView() { return glm::radians(45.0f); }
+
     void rotate(float deltaX, float deltaY) {
         constexpr float sensitivity = 0.005f;
         yaw_ -= deltaX * sensitivity;
@@ -42,7 +50,7 @@ public:
     }
 
     [[nodiscard]] glm::mat4 projectionMatrix(float aspectRatio) const {
-        return glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
+        return glm::perspective(verticalFieldOfView(), aspectRatio, 0.1f, 100.0f);
     }
 
 private:
